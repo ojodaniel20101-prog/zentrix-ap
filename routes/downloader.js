@@ -1,6 +1,5 @@
 import express from 'express';
-import yts from 'yt-search';
-import play from 'play-dl';
+import playdl from 'play-dl';
 
 const router = express.Router();
 
@@ -16,11 +15,10 @@ router.get('/yta', async (req, res) => {
   }
 
   try {
-    // 1. Search for the video using yt-search (very reliable)
-    const searchResults = await yts(q);
-    const video = searchResults.videos[0];
-
-    if (!video) {
+    // 1. Search for the video using play-dl (pure JS, no Python needed)
+    const results = await playdl.search(q, { limit: 1 });
+    
+    if (!results || results.length === 0) {
       return res.status(404).json({
         status: 404,
         message: "Song not found",
@@ -28,43 +26,18 @@ router.get('/yta', async (req, res) => {
       });
     }
 
-    // 2. Try to get stream URL using play-dl with search (sometimes search bypasses better)
-    let dl_url = "";
-    try {
-        // play.search is sometimes more resilient than play.stream(url)
-        const playSearch = await play.search(q, { limit: 1 });
-        if (playSearch.length > 0) {
-            const stream = await play.stream(playSearch[0].url, {
-                quality: 0,
-                discordPlayerCompatibility: true
-            });
-            dl_url = stream.url;
-        } else {
-            // Fallback to the yt-search result
-            const stream = await play.stream(video.url, {
-                quality: 0,
-                discordPlayerCompatibility: true
-            });
-            dl_url = stream.url;
-        }
-    } catch (err) {
-        console.error("Extraction failed:", err.message);
-        // Last resort: Return a message indicating rate limit
-        return res.status(429).json({
-            status: 429,
-            message: "YouTube is currently rate-limiting the server. Please try again in a few minutes.",
-            powered_by: "Zentrix Tech"
-        });
-    }
+    const video = results[0];
 
+    // 2. Prepare the result using video metadata
+    // Returning video.url as dl_url as requested because stream URLs expire
     const result = {
       title: video.title,
-      duration: video.timestamp,
+      duration: video.durationRaw,
       size: "Unknown",
-      dl_url: dl_url,
-      thumbnail: video.thumbnail,
-      author: video.author.name,
-      views: video.views,
+      dl_url: video.url, 
+      thumbnail: video.thumbnails[0]?.url || "",
+      author: video.channel?.name || "Unknown",
+      views: video.views || 0,
       url: video.url
     };
 
@@ -75,10 +48,11 @@ router.get('/yta', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('General error:', error);
+    console.error('Error processing audio request:', error);
     res.status(500).json({
       status: 500,
-      message: "Error processing your request.",
+      message: "Error processing your request. The service might be temporarily unavailable.",
+      error: error.message,
       powered_by: "Zentrix Tech"
     });
   }
